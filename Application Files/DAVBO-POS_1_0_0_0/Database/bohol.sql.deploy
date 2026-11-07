@@ -1,0 +1,368 @@
+IF DB_ID(N'bohol') IS NULL
+	CREATE DATABASE [bohol];
+GO
+
+USE [bohol];
+GO
+
+IF OBJECT_ID(N'dbo.Roles', N'U') IS NULL
+BEGIN
+	CREATE TABLE dbo.Roles
+	(
+		RoleId int IDENTITY(1,1) NOT NULL CONSTRAINT PK_Roles PRIMARY KEY,
+		RoleName nvarchar(50) NOT NULL CONSTRAINT UQ_Roles_RoleName UNIQUE,
+		Description nvarchar(200) NULL
+	);
+END;
+GO
+
+IF OBJECT_ID(N'dbo.Categories', N'U') IS NULL
+BEGIN
+	CREATE TABLE dbo.Categories
+	(
+		CategoryId int IDENTITY(1,1) NOT NULL CONSTRAINT PK_Categories PRIMARY KEY,
+		Name nvarchar(100) NOT NULL CONSTRAINT UQ_Categories_Name UNIQUE,
+		Description nvarchar(200) NULL
+	);
+END;
+GO
+
+IF OBJECT_ID(N'dbo.Users', N'U') IS NULL
+BEGIN
+	CREATE TABLE dbo.Users
+	(
+		UserId int IDENTITY(1,1) NOT NULL CONSTRAINT PK_Users PRIMARY KEY,
+		Username nvarchar(50) NOT NULL CONSTRAINT UQ_Users_Username UNIQUE,
+		PasswordHash varchar(64) NOT NULL,
+		Salt varchar(32) NOT NULL,
+		FullName nvarchar(100) NOT NULL,
+		RoleId int NOT NULL,
+		IsActive bit NOT NULL CONSTRAINT DF_Users_IsActive DEFAULT (1),
+		CreatedAt datetime NOT NULL CONSTRAINT DF_Users_CreatedAt DEFAULT (GETDATE()),
+		LastLoginAt datetime NULL,
+		CONSTRAINT FK_Users_Roles FOREIGN KEY (RoleId) REFERENCES dbo.Roles(RoleId)
+	);
+END;
+GO
+
+IF OBJECT_ID(N'dbo.Products', N'U') IS NULL
+BEGIN
+	CREATE TABLE dbo.Products
+	(
+		ProductId int IDENTITY(1,1) NOT NULL CONSTRAINT PK_Products PRIMARY KEY,
+		Sku nvarchar(30) NOT NULL CONSTRAINT UQ_Products_Sku UNIQUE,
+		Barcode nvarchar(50) NULL,
+		Name nvarchar(150) NOT NULL,
+		CategoryId int NOT NULL,
+		Price decimal(18,2) NOT NULL,
+		Cost decimal(18,2) NOT NULL,
+		StockQty int NOT NULL CONSTRAINT DF_Products_StockQty DEFAULT (0),
+		ReorderLevel int NOT NULL CONSTRAINT DF_Products_ReorderLevel DEFAULT (0),
+		Image varbinary(max) NULL,
+		IsActive bit NOT NULL CONSTRAINT DF_Products_IsActive DEFAULT (1),
+		CreatedAt datetime NOT NULL CONSTRAINT DF_Products_CreatedAt DEFAULT (GETDATE()),
+		UpdatedAt datetime NOT NULL CONSTRAINT DF_Products_UpdatedAt DEFAULT (GETDATE()),
+		CONSTRAINT FK_Products_Categories FOREIGN KEY (CategoryId) REFERENCES dbo.Categories(CategoryId)
+	);
+END;
+GO
+
+IF OBJECT_ID(N'dbo.Customers', N'U') IS NULL
+BEGIN
+	CREATE TABLE dbo.Customers
+	(
+		CustomerId int IDENTITY(1,1) NOT NULL CONSTRAINT PK_Customers PRIMARY KEY,
+		FullName nvarchar(100) NOT NULL,
+		Phone nvarchar(30) NULL,
+		Email nvarchar(120) NULL,
+		Address nvarchar(250) NULL,
+		CreatedAt datetime NOT NULL CONSTRAINT DF_Customers_CreatedAt DEFAULT (GETDATE())
+	);
+END;
+GO
+
+IF OBJECT_ID(N'dbo.Orders', N'U') IS NULL
+BEGIN
+	CREATE TABLE dbo.Orders
+	(
+		OrderId int IDENTITY(1,1) NOT NULL CONSTRAINT PK_Orders PRIMARY KEY,
+		OrderNumber nvarchar(30) NOT NULL CONSTRAINT UQ_Orders_OrderNumber UNIQUE,
+		CustomerId int NULL,
+		UserId int NOT NULL,
+		OrderDate datetime NOT NULL CONSTRAINT DF_Orders_OrderDate DEFAULT (GETDATE()),
+		Subtotal decimal(18,2) NOT NULL,
+		TaxAmount decimal(18,2) NOT NULL,
+		DiscountAmount decimal(18,2) NOT NULL,
+		Total decimal(18,2) NOT NULL,
+		PaymentMethod nvarchar(20) NOT NULL,
+		AmountPaid decimal(18,2) NOT NULL,
+		ChangeDue decimal(18,2) NOT NULL,
+		Status nvarchar(20) NOT NULL,
+		CONSTRAINT FK_Orders_Customers FOREIGN KEY (CustomerId) REFERENCES dbo.Customers(CustomerId),
+		CONSTRAINT FK_Orders_Users FOREIGN KEY (UserId) REFERENCES dbo.Users(UserId)
+	);
+END;
+GO
+
+IF OBJECT_ID(N'dbo.OrderDetails', N'U') IS NULL
+BEGIN
+	CREATE TABLE dbo.OrderDetails
+	(
+		OrderDetailId int IDENTITY(1,1) NOT NULL CONSTRAINT PK_OrderDetails PRIMARY KEY,
+		OrderId int NOT NULL,
+		ProductId int NOT NULL,
+		Quantity int NOT NULL,
+		UnitPrice decimal(18,2) NOT NULL,
+		LineTotal decimal(18,2) NOT NULL,
+		CONSTRAINT FK_OrderDetails_Orders FOREIGN KEY (OrderId) REFERENCES dbo.Orders(OrderId) ON DELETE CASCADE,
+		CONSTRAINT FK_OrderDetails_Products FOREIGN KEY (ProductId) REFERENCES dbo.Products(ProductId)
+	);
+END;
+GO
+
+IF OBJECT_ID(N'dbo.InventoryLog', N'U') IS NULL
+BEGIN
+	CREATE TABLE dbo.InventoryLog
+	(
+		LogId int IDENTITY(1,1) NOT NULL CONSTRAINT PK_InventoryLog PRIMARY KEY,
+		ProductId int NOT NULL,
+		ChangeQty int NOT NULL,
+		Reason nvarchar(200) NOT NULL,
+		UserId int NOT NULL,
+		CreatedAt datetime NOT NULL CONSTRAINT DF_InventoryLog_CreatedAt DEFAULT (GETDATE()),
+		CONSTRAINT FK_InventoryLog_Products FOREIGN KEY (ProductId) REFERENCES dbo.Products(ProductId),
+		CONSTRAINT FK_InventoryLog_Users FOREIGN KEY (UserId) REFERENCES dbo.Users(UserId)
+	);
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = N'Admin')
+	INSERT dbo.Roles (RoleName, Description) VALUES (N'Admin', N'Full system access');
+IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = N'Cashier')
+	INSERT dbo.Roles (RoleName, Description) VALUES (N'Cashier', N'Point-of-sale access');
+IF NOT EXISTS (SELECT 1 FROM dbo.Categories WHERE Name = N'General')
+	INSERT dbo.Categories (Name, Description) VALUES (N'General', N'Default product category');
+GO
+
+IF NOT EXISTS (SELECT 1 FROM dbo.Users WHERE Username = N'admin')
+BEGIN
+	DECLARE @AdminSalt varchar(32) = 'DAVBO-POS-ADMIN';
+	INSERT dbo.Users (Username, PasswordHash, Salt, FullName, RoleId, IsActive)
+	SELECT N'admin', CONVERT(varchar(64), HASHBYTES('SHA2_256', CONVERT(varchar(128), @AdminSalt + 'admin')), 2),
+		   @AdminSalt, N'System Administrator', RoleId, 1
+	FROM dbo.Roles
+	WHERE RoleName = N'Admin';
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_Login
+	@Username nvarchar(50)
+AS
+BEGIN
+	SET NOCOUNT ON;
+	SELECT u.UserId, u.Username, u.PasswordHash, u.Salt, u.FullName,
+		   u.RoleId, r.RoleName, u.IsActive
+	FROM dbo.Users AS u
+	INNER JOIN dbo.Roles AS r ON r.RoleId = u.RoleId
+	WHERE u.Username = LTRIM(RTRIM(@Username));
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_Order_Create
+	@UserId int,
+	@CustomerId int = NULL,
+	@PaymentMethod nvarchar(20),
+	@DiscountAmount decimal(18,2) = 0,
+	@TaxRate decimal(5,2) = 0,
+	@AmountPaid decimal(18,2),
+	@ItemsXml xml
+AS
+BEGIN
+	SET NOCOUNT ON;
+	SET XACT_ABORT ON;
+
+	IF @UserId IS NULL OR NOT EXISTS (SELECT 1 FROM dbo.Users WHERE UserId = @UserId AND IsActive = 1)
+		THROW 50001, 'The sale user is invalid or inactive.', 1;
+
+	IF @PaymentMethod IS NULL OR LTRIM(RTRIM(@PaymentMethod)) = ''
+		THROW 50002, 'A payment method is required.', 1;
+
+	IF @ItemsXml IS NULL
+		THROW 50003, 'At least one product is required.', 1;
+
+	DECLARE @Items TABLE
+	(
+		ProductId int NOT NULL PRIMARY KEY,
+		Quantity int NOT NULL,
+		UnitPrice decimal(18,2) NOT NULL
+	);
+
+	INSERT @Items (ProductId, Quantity, UnitPrice)
+	SELECT
+		Item.value('@ProductId', 'int'),
+		Item.value('@Quantity', 'int'),
+		Item.value('@UnitPrice', 'decimal(18,2)')
+	FROM @ItemsXml.nodes('/Items/Item') AS Items(Item);
+
+	IF NOT EXISTS (SELECT 1 FROM @Items)
+		THROW 50004, 'At least one product is required.', 1;
+
+	IF EXISTS (SELECT 1 FROM @Items WHERE Quantity <= 0 OR UnitPrice < 0)
+		THROW 50005, 'Product quantities and prices must be valid.', 1;
+
+	IF (SELECT COUNT(*) FROM @Items AS i INNER JOIN dbo.Products AS p ON p.ProductId = i.ProductId) <> (SELECT COUNT(*) FROM @Items)
+		THROW 50010, 'One or more selected products no longer exists.', 1;
+
+	UPDATE i
+	SET UnitPrice = p.Price
+	FROM @Items AS i
+	INNER JOIN dbo.Products AS p ON p.ProductId = i.ProductId;
+
+	DECLARE @Subtotal decimal(18,2);
+	DECLARE @TaxAmount decimal(18,2);
+	DECLARE @Total decimal(18,2);
+	DECLARE @ChangeDue decimal(18,2);
+	DECLARE @OrderId int;
+	DECLARE @Discount decimal(18,2) = ISNULL(@DiscountAmount, 0);
+	DECLARE @Rate decimal(5,2) = ISNULL(@TaxRate, 0);
+
+	IF @Discount < 0 OR @Rate < 0
+		THROW 50006, 'Discount and tax rate cannot be negative.', 1;
+	IF @Rate > 100
+		THROW 50011, 'Tax rate cannot exceed 100 percent.', 1;
+
+	SELECT @Subtotal = SUM(Quantity * UnitPrice) FROM @Items;
+	IF @Discount > @Subtotal
+		THROW 50007, 'Discount cannot exceed the subtotal.', 1;
+
+	SET @TaxAmount = ROUND((@Subtotal - @Discount) * @Rate / 100, 2);
+	SET @Total = @Subtotal - @Discount + @TaxAmount;
+	IF @AmountPaid IS NULL OR @AmountPaid < @Total
+		THROW 50008, 'The amount paid is less than the order total.', 1;
+
+	SET @ChangeDue = @AmountPaid - @Total;
+
+	BEGIN TRANSACTION;
+
+	UPDATE p
+	SET p.StockQty = p.StockQty - i.Quantity,
+		p.UpdatedAt = GETDATE()
+	FROM dbo.Products AS p
+	INNER JOIN @Items AS i ON i.ProductId = p.ProductId
+	WHERE p.IsActive = 1 AND p.StockQty >= i.Quantity;
+
+	IF @@ROWCOUNT <> (SELECT COUNT(*) FROM @Items)
+	BEGIN
+		ROLLBACK TRANSACTION;
+		THROW 50009, 'One or more products are inactive or do not have enough stock.', 1;
+	END;
+
+	INSERT dbo.Orders
+	(
+		OrderNumber, CustomerId, UserId, OrderDate, Subtotal, TaxAmount,
+		DiscountAmount, Total, PaymentMethod, AmountPaid, ChangeDue, Status
+	)
+	VALUES
+	(
+		N'POS-' + LEFT(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N''), 26),
+		@CustomerId, @UserId, GETDATE(), @Subtotal, @TaxAmount,
+		@Discount, @Total, LTRIM(RTRIM(@PaymentMethod)), @AmountPaid, @ChangeDue, N'Completed'
+	);
+
+	SET @OrderId = CONVERT(int, SCOPE_IDENTITY());
+
+	INSERT dbo.OrderDetails (OrderId, ProductId, Quantity, UnitPrice, LineTotal)
+	SELECT @OrderId, ProductId, Quantity, UnitPrice, Quantity * UnitPrice
+	FROM @Items;
+
+	INSERT dbo.InventoryLog (ProductId, ChangeQty, Reason, UserId, CreatedAt)
+	SELECT ProductId, -Quantity, N'Sale', @UserId, GETDATE()
+	FROM @Items;
+
+	COMMIT TRANSACTION;
+
+	SELECT @OrderId AS Id;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_Report_Dashboard
+AS
+BEGIN
+	SET NOCOUNT ON;
+	SELECT
+		ISNULL((SELECT SUM(o.Total) FROM dbo.Orders AS o WHERE o.OrderDate >= CONVERT(date, GETDATE()) AND o.OrderDate < DATEADD(day, 1, CONVERT(date, GETDATE())) AND o.Status = N'Completed'), 0) AS TodaySales,
+		(SELECT COUNT(*) FROM dbo.Orders AS o WHERE o.OrderDate >= CONVERT(date, GETDATE()) AND o.OrderDate < DATEADD(day, 1, CONVERT(date, GETDATE())) AND o.Status = N'Completed') AS TodayOrders,
+		(SELECT COUNT(*) FROM dbo.Products AS p WHERE p.IsActive = 1 AND p.StockQty <= p.ReorderLevel) AS LowStockCount,
+		(SELECT COUNT(*) FROM dbo.Products AS p WHERE p.IsActive = 1) AS ActiveProducts;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_Report_RecentActivity
+AS
+BEGIN
+	SET NOCOUNT ON;
+	SELECT TOP (10) ActivityDate, ActivityType, Description
+	FROM
+	(
+		SELECT o.OrderDate AS ActivityDate, N'Order' AS ActivityType,
+			   N'Order ' + o.OrderNumber + N' recorded for ' + CONVERT(nvarchar(30), o.Total) AS Description
+		FROM dbo.Orders AS o
+		UNION ALL
+		SELECT il.CreatedAt, N'Inventory',
+			   p.Name + N': ' + CONVERT(nvarchar(20), il.ChangeQty) + N' (' + il.Reason + N')'
+		FROM dbo.InventoryLog AS il
+		INNER JOIN dbo.Products AS p ON p.ProductId = il.ProductId
+	) AS activity
+	ORDER BY ActivityDate DESC;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_Product_Insert
+	@Sku nvarchar(30), @Barcode nvarchar(50), @Name nvarchar(150), @CategoryId int,
+	@Price decimal(18,2), @Cost decimal(18,2), @StockQty int, @ReorderLevel int,
+	@Image varbinary(max), @UserId int = NULL
+AS
+BEGIN
+	SET NOCOUNT ON;
+	INSERT dbo.Products (Sku, Barcode, Name, CategoryId, Price, Cost, StockQty, ReorderLevel, Image)
+	VALUES (@Sku, @Barcode, @Name, @CategoryId, @Price, @Cost, @StockQty, @ReorderLevel, @Image);
+	SELECT CONVERT(int, SCOPE_IDENTITY()) AS Id;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_Product_Update
+	@ProductId int, @Sku nvarchar(30), @Barcode nvarchar(50), @Name nvarchar(150), @CategoryId int,
+	@Price decimal(18,2), @Cost decimal(18,2), @ReorderLevel int, @IsActive bit,
+	@Image varbinary(max), @ChangeImage bit
+AS
+BEGIN
+	SET NOCOUNT ON;
+	UPDATE dbo.Products
+	SET Sku = @Sku, Barcode = @Barcode, Name = @Name, CategoryId = @CategoryId,
+		Price = @Price, Cost = @Cost, ReorderLevel = @ReorderLevel, IsActive = @IsActive,
+		Image = CASE WHEN @ChangeImage = 1 THEN @Image ELSE Image END,
+		UpdatedAt = GETDATE()
+	WHERE ProductId = @ProductId;
+	RETURN @@ROWCOUNT;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_Product_Delete
+	@ProductId int
+AS
+BEGIN
+	SET NOCOUNT ON;
+	DELETE FROM dbo.Products WHERE ProductId = @ProductId;
+	RETURN @@ROWCOUNT;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.usp_User_TouchLogin
+	@UserId int
+AS
+BEGIN
+	SET NOCOUNT ON;
+	UPDATE dbo.Users SET LastLoginAt = GETDATE() WHERE UserId = @UserId;
+	RETURN @@ROWCOUNT;
+END;
+GO
